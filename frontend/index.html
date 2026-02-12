@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Langchain chatbot with RAG</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b0f14;
+        --panel: #111827;
+        --muted: #9ca3af;
+        --accent: #3b82f6;
+        --text: #e5e7eb;
+      }
+      body {
+        margin: 0;
+        font-family: "Inter", system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: grid;
+        min-height: 100vh;
+        place-items: center;
+      }
+      .app {
+        width: min(920px, 92vw);
+        background: var(--panel);
+        border-radius: 16px;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        overflow: hidden;
+      }
+      header {
+        padding: 20px 24px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      header h1 {
+        font-size: 20px;
+        margin: 0 0 6px;
+      }
+      header p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .messages {
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        overflow-y: auto;
+        max-height: 60vh;
+      }
+      .message {
+        padding: 14px 16px;
+        border-radius: 12px;
+        line-height: 1.5;
+        font-size: 15px;
+      }
+      .message.user {
+        align-self: flex-end;
+        background: rgba(59, 130, 246, 0.2);
+        border: 1px solid rgba(59, 130, 246, 0.4);
+      }
+      .message.bot {
+        align-self: flex-start;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      form {
+        padding: 18px 24px;
+        display: flex;
+        gap: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      input {
+        flex: 1;
+        padding: 12px 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(0, 0, 0, 0.2);
+        color: var(--text);
+        font-size: 15px;
+      }
+      button {
+        padding: 12px 18px;
+        border-radius: 10px;
+        border: none;
+        background: var(--accent);
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 12px;
+        padding: 0 24px 18px;
+      }
+      .news-block {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .news-item {
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        display: grid;
+        gap: 6px;
+      }
+      .news-title {
+        font-weight: 700;
+        font-size: 15px;
+      }
+      .news-description {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .news-link a {
+        color: var(--accent);
+        text-decoration: none;
+        word-break: break-word;
+      }
+      .news-link a:hover {
+        text-decoration: underline;
+      }
+      .news-note {
+        color: var(--muted);
+        font-size: 13px;
+        border-left: 3px solid rgba(255, 255, 255, 0.2);
+        padding-left: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <h1>Langchain chatbot with RAG</h1>
+        <p>Professional chat UI powered by LangChain, OpenAI, and web RAG</p>
+      </header>
+      <section class="messages" id="messages"></section>
+      <form id="chat-form">
+        <input
+          id="message-input"
+          name="message"
+          placeholder="Ask anything..."
+          autocomplete="off"
+          required
+        />
+        <button type="submit">Send</button>
+      </form>
+      <div class="muted">Tips: Keep questions concise for faster responses.</div>
+    </div>
+
+    <script>
+      const messagesEl = document.getElementById("messages");
+      const form = document.getElementById("chat-form");
+      const input = document.getElementById("message-input");
+
+      const sessionIdKey = "langchain-chat-session";
+      const sessionId =
+        localStorage.getItem(sessionIdKey) ||
+        crypto.randomUUID();
+      localStorage.setItem(sessionIdKey, sessionId);
+
+      function escapeHtml(value) {
+        const div = document.createElement("div");
+        div.textContent = value;
+        return div.innerHTML;
+      }
+
+      function renderNews(text) {
+        const marker = "NEWS_RESULTS";
+        const markerIndex = text.indexOf(marker);
+        if (markerIndex === -1) {
+          return null;
+        }
+
+        const body = text.slice(markerIndex + marker.length).trim();
+        if (!body) {
+          return null;
+        }
+
+        const items = body
+          .split(/\n\n---\n\n/g)
+          .map((item) => item.trim())
+          .filter(Boolean);
+
+        if (!items.length) {
+          return null;
+        }
+
+        const renderedItems = items
+          .map((item) => {
+            const lines = item.split("\n").map((line) => line.trim());
+            const titleLine = lines.find((line) => line.toLowerCase().startsWith("title:")) || "";
+            const descriptionLine = lines.find((line) => line.toLowerCase().startsWith("description:")) || "";
+            const linkLine = lines.find((line) => line.toLowerCase().startsWith("link:")) || "";
+            const noteLine = lines.find((line) => line.toLowerCase().startsWith("note:")) || "";
+
+            const title = titleLine.replace(/^title:\s*/i, "");
+            const description = descriptionLine.replace(/^description:\s*/i, "");
+            const link = linkLine.replace(/^link:\s*/i, "");
+            const note = noteLine.replace(/^note:\s*/i, "");
+
+            if (!title && !description && !link && note) {
+              return `<div class="news-note">${escapeHtml(note)}</div>`;
+            }
+
+            const linkHtml = link
+              ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link)}</a>`
+              : "";
+
+            return `
+              <div class="news-item">
+                <div class="news-title"><strong>${escapeHtml(title)}</strong></div>
+                <div class="news-description">${escapeHtml(description)}</div>
+                ${linkHtml ? `<div class="news-link">${linkHtml}</div>` : ""}
+              </div>
+            `;
+          })
+          .join("");
+
+        return `<div class="news-block">${renderedItems}</div>`;
+      }
+
+      function addMessage(text, role) {
+        const div = document.createElement("div");
+        div.className = `message ${role}`;
+        const newsHtml = role === "bot" ? renderNews(text) : null;
+        if (newsHtml) {
+          div.innerHTML = newsHtml;
+        } else {
+          div.textContent = text;
+        }
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+
+      async function sendMessage(message) {
+        addMessage(message, "user");
+        input.value = "";
+
+        const response = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, session_id: sessionId })
+        });
+
+        if (!response.ok) {
+          addMessage("Something went wrong. Please try again.", "bot");
+          return;
+        }
+
+        const data = await response.json();
+        addMessage(data.reply, "bot");
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const message = input.value.trim();
+        if (!message) return;
+        sendMessage(message);
+      });
+
+      addMessage("Hi! Ask me about this project or LangChain.", "bot");
+    </script>
+  </body>
+</html>
